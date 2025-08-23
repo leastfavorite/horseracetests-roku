@@ -5,14 +5,231 @@
 '** https://docs.roku.com/doc/developersdk/en-us
 '*************************************************************
 
-Function CreateSprite(compositor, path, x, y) As Object
+Sub Init()
+	
+	m.files = CreateObject("roFileSystem")
+    CacheFile("https://raw.githubusercontent.com/leastfavorite/horseracetests-roku/8a41e821962b018e9fe14cd969d6e67ad94006d8/roku/maps/1.png", "map.png")
+    CacheFile("https://raw.githubusercontent.com/leastfavorite/horseracetests-roku/8a41e821962b018e9fe14cd969d6e67ad94006d8/roku/maps/1.json", "map.json")
+    CacheFile("https://raw.githubusercontent.com/leastfavorite/horseracetests-roku/8a41e821962b018e9fe14cd969d6e67ad94006d8/roku/images/sunflower.png", "horse.png")
 
-    bmp = CreateObject("roBitmap", "pkg:/images/sunflower.png")
-    region = CreateObject("roRegion", bmp, 0, 0, bmp.GetWidth(), bmp.GetHeight())
-    sprite = compositor.NewSprite(x, y, region, 999)
-    sprite.SetData({ x: 0.0 + x, y: 0.0 + y, theta: Rnd(0) * 6.283 })
-    return sprite
+	m.PI = 3.14159265
+	m.R = 16
 
+	m.horse = CreateObject("roBitmap", "tmp:/horse.png")
+	m.horseRegion = CreateObject("roRegion", m.horse, 0, 0, 2 * m.R, 2 * m.R)
+	m.map = CreateObject("roBitmap", "tmp:/map.png")
+	m.walls = ParseJson(ReadAsciiFile("tmp:/map.json"))
+	
+	m.port = CreateObject("roMessagePort")
+
+	m.screen = CreateObject("roScreen", True)
+	m.screen.SetMessagePort(m.port)
+	m.screen.SetAlphaEnable(True)
+	
+	m.compositor = CreateObject("roCompositor")
+	m.compositor.SetDrawTo(m.screen, &h0)
+	
+	m.sprites = []
+	m.sprites[0] = m.compositor.NewSprite(0, 0, m.horseRegion)
+	m.sprites[0].SetData({ x: 175.0, y: 153.0, theta: Rnd(0) * 2 * m.PI })
+	m.sprites[1] = m.compositor.NewSprite(0, 0, m.horseRegion)
+	m.sprites[1].SetData({ x: 175.0, y: 110.0, theta: Rnd(0) * 2 * m.PI })
+	
+	m.clock = CreateObject("roTimespan")
+	m.clock.Mark()
+	
+End Sub
+
+Sub Draw()
+	for each sprite in m.sprites
+		data = sprite.GetData()
+		sprite.MoveTo(data.x - m.R, data.y - m.R)
+	end for
+
+	m.screen.DrawObject(0, 0, m.map)
+
+	for each polygon in m.walls
+		for i = 0 to polygon.Count() - 1
+			p1 = polygon[i]
+			p2 = polygon[(i + 1) mod polygon.Count()]
+			m.screen.DrawLine(p1.x, p1.y, p2.x, p2.y, &hFF0000FF)
+		end for
+	end for
+	m.compositor.DrawAll()
+End Sub
+
+Function Update(ms as float)
+	R = m.R
+	SPEED = 0.1
+	EPSILON = 1.1
+	for each sprite in m.sprites
+		data = sprite.GetData()
+		x = data.x
+		y = data.y
+		theta = data.theta
+		
+		x = x + SPEED * ms * Cos(theta)
+		y = y + SPEED * ms * Sin(theta)
+		
+		collided = False
+		for each polygon in m.walls
+			for each pt in polygon
+				ax = 0.0 + x - pt.x
+				ay = 0.0 + y - pt.y
+				vx = Cos(theta)
+				vy = Sin(theta)
+				adv = ax*vx+ay*vy
+				ada = ax*ax+ay*ay
+				
+				if ada > R*R then
+					continue for
+				end if
+				
+				det = adv * adv - ada + R*R
+				t = -adv - Sqr(det)
+				
+				if t < 0 and t > -R then
+					x = x + EPSILON*t*vx
+					y = y + EPSILON*t*vy
+					
+					ax = 0.0 + x - pt.x
+					ay = 0.0 + y - pt.y
+					theta = m.PI + 2 * Atan2(ay, ax) - theta
+					
+					collided = True
+					exit for
+				end if
+			end for
+			if collided then exit for
+			for i = 0 to polygon.Count() - 1
+				p1 = polygon[i]
+				p2 = polygon[(i + 1) mod polygon.Count()]
+				ax = 0.0 + p2.x - p1.x
+				ay = 0.0 + p2.y - p1.y
+				bx = 0.0 + x - p1.x
+				by = 0.0 + y - p1.y
+				qs = (ax*bx+ay*by)/(ax*ax+ay*ay)
+
+				if qs <= 0.0 or qs >= 1.0 then
+					continue for
+				end if
+
+				qx = ax * qs
+				qy = ay * qs
+				vx = Cos(theta)
+				vy = Sin(theta)
+
+				aax = 0.0 + x - qx - p1.x
+				aay = 0.0 + y - qy - p1.y
+
+				qqs = (ax*vx+ay*vy)/(ax*ax+ay*ay)
+				bbx = vx-qqs*ax
+				bby = vy-qqs*ay
+
+				ada = aax*aax + aay*aay
+				adb = aax*bbx + aay*bby
+				bdb = bbx*bbx + bby*bby
+
+				det = adb*adb - bdb*(ada-R*R)
+				t = (- adb - Sqr(det)) / (bdb)
+				if t >= 0 or t <= -R then
+					continue for
+				end if
+				x = x + vx * EPSILON*t
+				y = y + vy * EPSILON*t
+				ref = Atan2(ay, ax)
+				theta = ref + ref - theta
+				collided = True
+				exit for
+			end for
+			if collided then exit for
+		end for
+		sprite.SetData({ x: x, y: y, theta: theta })
+	end for
+			
+	for i = 0 to m.sprites.Count() - 1
+		for j = i+1 to m.sprites.Count() - 1
+			sprite1 = m.sprites[i]
+			data1 = sprite1.GetData()
+			x1 = data1.x
+			y1 = data1.y
+			theta1 = data1.theta
+
+			sprite2 = m.sprites[j]
+			data2 = sprite2.GetData()
+			x2 = data2.x
+			y2 = data2.y
+			theta2 = data2.theta
+					
+			dx = x1 - x2
+			dy = y1 - y2
+			c = dx*dx+dy*dy-4*R*R
+			
+			if c >= 0 then
+				continue for
+			end if
+					
+			dvx = Cos(theta1) - Cos(theta2)
+			dvy = Sin(theta1) - Sin(theta2)
+			b = (dx*dvx+dy*dvy)
+			a = (dvx*dvx+dvy*dvy)
+					
+			t = - (b+Sqr(b*b - a*c)) / a
+					
+			x1 = x1 + EPSILON*t*Cos(theta1)
+			y1 = y1 + EPSILON*t*Sin(theta1)
+
+			x2 = x2 + EPSILON*t*Cos(theta2)
+			y2 = y2 + EPSILON*t*Sin(theta2)
+			
+			normal = Atan2(y2-y1, x2-x1)
+			theta1 = m.PI + normal + normal - theta1
+			theta2 = m.PI + normal + normal - theta2
+					
+			sprite1.SetData({ x: x1, y: y1, theta: theta1 })
+			sprite2.SetData({ x: x2, y: y2, theta: theta2 })
+			
+		end for
+	end for
+End Function
+
+Sub Main()
+	Init()
+
+    while(true)
+        msg = m.port.GetMessage()
+        msgType = type(msg)
+        if msgType = "roSGScreenEvent"
+            if msg.isScreenClosed() then return
+        end if
+
+        ms = m.clock.TotalMilliseconds()
+		if ms > 100 then ms = 100
+        m.clock.Mark()
+
+		Update(ms)
+		Draw()
+
+        m.screen.SwapBuffers()
+    end while
+End Sub
+
+'--- UTILITY FUNCTIONS ---
+
+Function CacheFile(url as string, file as string, overwrite = false as boolean) as string
+    tmpFile = "tmp:/" + file
+    if overwrite or not m.files.Exists(tmpFile)
+        http = CreateObject("roUrlTransfer")
+        http.SetUrl(url)
+        ret = http.GetToFile(tmpFile)
+        if ret = 200
+            print "CacheFile: "; url; " to "; tmpFile
+        else
+            print "File not cached! http return code: "; ret
+            tmpFile = ""
+        end if
+    end if
+    return tmpFile
 End Function
 
 Function Atan2(y, x) As Float
@@ -22,163 +239,13 @@ Function Atan2(y, x) As Float
     if x > 0 then
         return Atn(y / x)
     else if x < 0 and y >= 0 then
-        return Atn(y / x) + 3.1416
+        return Atn(y / x) + m.PI
     else if x < 0 then
-        return Atn(y / x) - 3.1416
+        return Atn(y / x) - m.PI
     else if x = 0 and y > 0 then
-        return 3.1416 / 2
-    end if
-
-    return -3.1416 / 2.0
-
+        return m.PI / 2
+    else if x = 0 and y <= 0 then
+		return -m.PI / 2
+	end if
+    return 0.0
 End Function
-
-sub Main()
-
-    screen = CreateObject("roScreen", True)
-    m.port = CreateObject("roMessagePort")
-    compositor = CreateObject("roCompositor")
-    compositor.SetDrawTo(screen, &h00000000)
-    clock = CreateObject("roTimespan")
-    clock.Mark()
-    screen.setMessagePort(m.port)
-    screen.SetAlphaEnable(True)
-
-    wallHeight = 25
-    walls = []
-    walls[0] = { x: 0, y: 0, w: screen.GetWidth(), h: wallHeight }
-    walls[1] = { x: 0, y: 0, w: wallHeight, h: screen.GetHeight() }
-    walls[2] = { x: screen.GetWidth() - wallHeight, y: 0, w: wallHeight, h: screen.GetHeight() }
-    walls[3] = { x: 0, y: screen.GetHeight() - wallHeight, w: screen.GetWidth(), h: wallHeight }
-    walls[4] = { x: 0, y: 250, w: 250 + wallHeight, h: wallHeight }
-    walls[5] = { x: 250, y: 0, w: wallHeight, h: 100 }
-
-
-    sprites = []
-    sprites[0] = CreateSprite(compositor, "pkg:/images/sunflower.png", 50, 50)
-    sprites[1] = CreateSprite(compositor, "pkg:/images/sunflower.png", 50, 100)
-    sprites[2] = CreateSprite(compositor, "pkg:/images/sunflower.png", 50, 150)
-    sprites[3] = CreateSprite(compositor, "pkg:/images/sunflower.png", 50, 200)
-
-    while(true)
-        msg = m.port.GetMessage()
-        msgType = type(msg)
-        if msgType = "roSGScreenEvent"
-            if msg.isScreenClosed() then return
-        end if
-
-        ms = clock.TotalMilliseconds()
-        clock.Mark()
-
-        speed = 0.1
-        size = 16
-        for each sprite in sprites
-            data = sprite.GetData()
-
-            theta = data.theta
-            dx = Cos(theta) * speed * ms
-            dy = Sin(theta) * speed * ms
-
-            x = data.x + dx
-            y = data.y + dy
-
-            collided = False
-
-            for each wall in walls
-                if wall.x < x and wall.x + wall.w > x then
-                    dy = wall.y - y
-                    if dy > 0 and dy < size and Sin(theta) > 0 then
-                        correction = 1.000 * (size - dy) / Sin(theta)
-                        print "y1"
-                        print correction
-                        x = x - correction * Cos(theta)
-                        y = y - correction * Sin(theta)
-                        theta = -theta
-                        collided = True
-                    end if
-
-                    dy = (wall.y + wall.h) - y
-                    if dy < 0 and dy > -size and Sin(theta) < 0 then
-                        correction = 1.000 * (size + dy) / Sin(theta)
-                        print "y2"
-                        print correction
-                        x = x - correction * Cos(theta)
-                        y = y - correction * Sin(theta)
-                        theta = -theta
-                        collided = True
-                    end if
-                end if
-
-                if wall.y < y and wall.y + wall.h > y and Cos(theta) > 0 then
-                    dx = wall.x - x
-                    if dx > 0 and dx < size then
-                        correction = 1.000 * (size - dx) / Cos(theta)
-                        print "x1"
-                        print correction
-                        x = x - correction * Cos(theta)
-                        y = y - correction * Sin(theta)
-                        theta = 3.1416-theta
-                        collided = True
-                    end if
-
-                    dx = (wall.x + wall.w) - x
-                    if dx < 0 and dx > -size and Cos(theta) < 0 then
-                        correction = 1.000 * (size + dx) / Cos(theta)
-                        print "x2"
-                        print correction
-                        x = x - correction * Cos(theta)
-                        y = y - correction * Sin(theta)
-                        theta = 3.1416-theta
-                        collided = True
-                    end if
-                end if
-
-                ' if wall.y < y + size and wall.y + wall.h > y + size then
-                '     if wall.x - x - size <= size and wall.x - x - size >= 0 then
-                '         x = wall.x - size - size
-                '         theta = 3.1416 - theta
-                '         collided = True
-                '     else if wall.w + wall.x - x > 0 and wall.w + wall.x - x < size then
-                '         x = wall.x + wall.w
-                '         theta = 3.1416 - theta
-                '         collided = True
-                '     end if
-                ' end if
-                '
-                ' points = []
-                ' points[0] = {x: wall.x, y: wall.y}
-                ' points[1] = {x: wall.x + wall.w, y: wall.y}
-                ' points[2] = {x: wall.x, y: wall.y + wall.h}
-                ' points[3] = {x: wall.x + wall.w, y: wall.y + wall.h}
-                '
-                ' for each point in points
-                '     dx = 0.0 + point.x - (x + size)
-                '     dy = 0.0 + point.y - (y + size)
-                '
-                '     dist = dx * dx + dy * dy
-                '     if dist < size * size then
-                '         atan = Atan2(dy, dx)
-                '         theta = atan + atan - theta
-                '         collided = True
-                '     end if
-                '
-                ' end for
-
-            end for
-
-            if collided then
-                theta = theta + Rnd(0) * 1.5707 - 0.7853
-            end if
-            sprite.SetData({ theta: theta, x: x, y: y })
-            sprite.MoveTo(x - size, y - size)
-        end for
-
-        compositor.DrawAll()
-        for each wall in walls
-            screen.DrawRect(wall.x, wall.y, wall.w, wall.h, &h000080FF)
-        end for
-
-        screen.SwapBuffers()
-    end while
-end sub
-
