@@ -6,5 +6,5 @@
 APPNAME = hrt
 IMPORTS =
 
-APPSROOT = .
+APPSROOT = ..
 include $(APPSROOT)/app.mk

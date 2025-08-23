@@ -41,7 +41,7 @@ def parse_contours(img: Image) -> list[list[Point]]:
 
         total_pts = sum(len(c) for c in py_contours)
 
-        cv2.drawContours(img_copy, simplified_contours, -1, (255, 0, 0), 2)
+        cv2.drawContours(img_copy, simplified_contours, -1, (0, 255, 0), 2)
 
         cv2.imshow(WIN_NAME, with_text(img_copy, f"eps={eps}. {total_pts} pts. - for fewer pts, + for more pts, <CR> to submit"))
         key = cv2.waitKey(0)
